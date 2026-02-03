@@ -1,0 +1,25 @@
+# Пример значений переменных для Terraform
+# Скопируйте этот файл в terraform.tfvars и заполните своими значениями
+
+# Yandex Cloud credentials
+# Получите OAuth token: https://oauth.yandex.ru/authorize?response_type=token&client_id=1a6990aa636648e9b2ef855fa7bec2fb
+yandex_token = "your_oauth_token_here"
+
+# ID облака (найдите в консоли Yandex Cloud)
+cloud_id = "your_cloud_id"
+
+# ID каталога (найдите в консоли Yandex Cloud)
+folder_id = "your_folder_id"
+
+# Основная зона
+zone = "ru-central1-a"
+
+# Название проекта
+project_name = "credit-scoring"
+
+# Окружение
+environment = "production"
+
+# Алерты
+telegram_webhook_url = "https://api.telegram.org/bot<YOUR_BOT_TOKEN>/sendMessage?chat_id=<YOUR_CHAT_ID>"
+alert_email = "your-email@example.com"

@@ -1,0 +1,251 @@
+# Prometheus Alerting Rules для Credit Scoring API
+
+groups:
+  # ============================================
+  # API Health & Availability
+  # ============================================
+  - name: api_health
+    interval: 30s
+    rules:
+      - alert: APIDown
+        expr: up{job="credit-scoring-api"} == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Credit Scoring API is down"
+          description: "API instance {{ $labels.instance }} has been down for more than 2 minutes."
+      
+      - alert: HighErrorRate
+        expr: |
+          rate(credit_scoring_requests_total{status=~"5.."}[5m])
+          /
+          rate(credit_scoring_requests_total[5m]) > 0.05
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High error rate detected"
+          description: "Error rate is {{ $value | humanizePercentage }} for {{ $labels.instance }}"
+      
+      - alert: APILatencyHigh
+        expr: |
+          histogram_quantile(0.95, 
+            rate(credit_scoring_request_duration_seconds_bucket[5m])
+          ) > 1.0
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High API latency"
+          description: "95th percentile latency is {{ $value }}s for {{ $labels.instance }}"
+      
+      - alert: NoActiveRequests
+        expr: credit_scoring_active_requests == 0
+        for: 30m
+        labels:
+          severity: info
+        annotations:
+          summary: "No active requests"
+          description: "API has not received any requests for 30 minutes"
+  
+  # ============================================
+  # Resource Usage
+  # ============================================
+  - name: resource_usage
+    interval: 30s
+    rules:
+      - alert: HighMemoryUsage
+        expr: |
+          (container_memory_usage_bytes{pod=~"credit-scoring-api.*"} 
+          / 
+          container_spec_memory_limit_bytes{pod=~"credit-scoring-api.*"}) > 0.9
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High memory usage"
+          description: "Pod {{ $labels.pod }} is using {{ $value | humanizePercentage }} of memory limit"
+      
+      - alert: HighCPUUsage
+        expr: |
+          rate(container_cpu_usage_seconds_total{pod=~"credit-scoring-api.*"}[5m])
+          /
+          container_spec_cpu_quota{pod=~"credit-scoring-api.*"} > 0.8
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High CPU usage"
+          description: "Pod {{ $labels.pod }} CPU usage is {{ $value | humanizePercentage }}"
+      
+      - alert: PodRestartingTooOften
+        expr: |
+          rate(kube_pod_container_status_restarts_total{pod=~"credit-scoring-api.*"}[15m]) > 0
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Pod restarting frequently"
+          description: "Pod {{ $labels.pod }} has restarted {{ $value }} times in 15 minutes"
+  
+  # ============================================
+  # Model Performance & Drift
+  # ============================================
+  - name: model_monitoring
+    interval: 1m
+    rules:
+      - alert: ModelDriftDetected
+        expr: evidently_data_drift_score > 0.5
+        for: 30m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Data drift detected"
+          description: "Data drift score is {{ $value }}, model retraining may be needed"
+      
+      - alert: ConceptDriftDetected
+        expr: evidently_concept_drift_score > 0.3
+        for: 1h
+        labels:
+          severity: warning
+        annotations:
+          summary: "Concept drift detected"
+          description: "Concept drift detected, model performance may degrade"
+      
+      - alert: ModelAccuracyDrop
+        expr: |
+          (evidently_current_accuracy - evidently_reference_accuracy) < -0.05
+        for: 30m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Model accuracy drop"
+          description: "Model accuracy dropped by {{ $value | humanizePercentage }}"
+      
+      - alert: PredictionBiasDetected
+        expr: |
+          abs(
+            rate(credit_scoring_predictions_total{prediction="1"}[1h])
+            /
+            rate(credit_scoring_predictions_total[1h])
+            - 0.5
+          ) > 0.2
+        for: 2h
+        labels:
+          severity: warning
+        annotations:
+          summary: "Prediction bias detected"
+          description: "Prediction distribution is skewed: {{ $value | humanizePercentage }}"
+  
+  # ============================================
+  # Infrastructure
+  # ============================================
+  - name: infrastructure
+    interval: 30s
+    rules:
+      - alert: KubernetesNodeNotReady
+        expr: kube_node_status_condition{condition="Ready",status="true"} == 0
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Kubernetes node not ready"
+          description: "Node {{ $labels.node }} has been not ready for 5 minutes"
+      
+      - alert: KubernetesNodeMemoryPressure
+        expr: kube_node_status_condition{condition="MemoryPressure",status="true"} == 1
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Node under memory pressure"
+          description: "Node {{ $labels.node }} is under memory pressure"
+      
+      - alert: KubernetesNodeDiskPressure
+        expr: kube_node_status_condition{condition="DiskPressure",status="true"} == 1
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Node under disk pressure"
+          description: "Node {{ $labels.node }} is under disk pressure"
+      
+      - alert: PersistentVolumeFillingUp
+        expr: |
+          (kubelet_volume_stats_available_bytes / kubelet_volume_stats_capacity_bytes) < 0.1
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "PersistentVolume filling up"
+          description: "PV {{ $labels.persistentvolumeclaim }} has only {{ $value | humanizePercentage }} space left"
+  
+  # ============================================
+  # Deployment & Rollout
+  # ============================================
+  - name: deployment
+    interval: 30s
+    rules:
+      - alert: DeploymentReplicasMismatch
+        expr: |
+          kube_deployment_spec_replicas{deployment="credit-scoring-api"}
+          !=
+          kube_deployment_status_replicas_available{deployment="credit-scoring-api"}
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Deployment replicas mismatch"
+          description: "Deployment {{ $labels.deployment }} has mismatched replicas for 10 minutes"
+      
+      - alert: DeploymentGenerationMismatch
+        expr: |
+          kube_deployment_status_observed_generation{deployment="credit-scoring-api"}
+          !=
+          kube_deployment_metadata_generation{deployment="credit-scoring-api"}
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Deployment generation mismatch"
+          description: "Deployment {{ $labels.deployment }} has not been successfully rolled out"
+      
+      - alert: HorizontalPodAutoscalerMaxedOut
+        expr: |
+          kube_horizontalpodautoscaler_status_current_replicas{horizontalpodautoscaler="credit-scoring-api-hpa"}
+          ==
+          kube_horizontalpodautoscaler_spec_max_replicas{horizontalpodautoscaler="credit-scoring-api-hpa"}
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: "HPA has reached maximum replicas"
+          description: "HPA {{ $labels.horizontalpodautoscaler }} is at maximum capacity"
+  
+  # ============================================
+  # Business Metrics
+  # ============================================
+  - name: business_metrics
+    interval: 5m
+    rules:
+      - alert: LowPredictionVolume
+        expr: rate(credit_scoring_requests_total[1h]) < 10
+        for: 30m
+        labels:
+          severity: info
+        annotations:
+          summary: "Low prediction volume"
+          description: "Prediction rate is {{ $value }} requests/second, which is unusually low"
+      
+      - alert: HighDefaultRate
+        expr: |
+          rate(credit_scoring_predictions_total{prediction="1"}[1h])
+          /
+          rate(credit_scoring_predictions_total[1h]) > 0.4
+        for: 2h
+        labels:
+          severity: warning
+        annotations:
+          summary: "High default prediction rate"
+          description: "Default rate is {{ $value | humanizePercentage }}, investigate model or data"
